@@ -3,7 +3,7 @@
 **Advisory pull request review that stays silent unless it is sure — and gets better from what
 reviewers do with its comments.**
 
-plumb is part of the Vizzori family: [loam](https://github.com/ybotok/loam) is the ground —
+plumb is part of the Vizzori family: [loam](https://github.com/Vizzori/loam) is the ground —
 architecture and requirements as checked files — and plumb is the plumb line that checks what is
 built on it.
 

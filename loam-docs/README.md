@@ -10,7 +10,7 @@ In paths and commands, loam calls one governed implementation boundary a
 a worker. Nested C4 elements remain modules or components unless they need their
 own repository binding, contracts, evidence and deployment boundary.
 
-It is read and written with [**loam**](https://github.com/ybotok/loam). Delete
+It is read and written with [**loam**](https://github.com/Vizzori/loam). Delete
 loam and these documents still make sense; that is the point of keeping them this
 way.
 
