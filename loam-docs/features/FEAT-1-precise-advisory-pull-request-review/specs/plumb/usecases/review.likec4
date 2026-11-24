@@ -1,0 +1,45 @@
+// plumb — one revision of a change, from the package to the result.
+
+specification {
+  tag req-REVIEW-VERIFIED
+}
+
+views {
+  dynamic view uc_review {
+    #req-REVIEW-VERIFIED
+    title 'Flows / Review of one revision'
+
+    integrator -> svc_plumb.intake.http 'putSnapshot: the manifest of the revision; the answer lists the files the archive lacks'
+    integrator -> svc_plumb.intake.http 'uploadBlob: each missing file, once'
+    svc_plumb.intake.http -> svc_plumb.intake.dispatcher 'the manifest and the files'
+    svc_plumb.intake.dispatcher -> svc_plumb.archive.port 'stores each file once by digest, then the manifest'
+    integrator -> svc_plumb.intake.http 'submitReview: diff, changed files, snapshot digest and context'
+    svc_plumb.intake.http -> svc_plumb.intake.dispatcher 'the validated command'
+    svc_plumb.intake.dispatcher -> svc_plumb.archive.port 'records the request before anything else'
+    svc_plumb.intake.dispatcher -> svc_plumb.review.port 'starts the review job with the request'
+    svc_plumb.review.port -> svc_plumb.review.triage 'the review job'
+    svc_plumb.review.triage -> svc_plumb.review.rulesClient 'escalation parameters of the project'
+    svc_plumb.review.rulesClient -> svc_plumb.rules.port 'effective rules and parameters of the files, with their versions'
+    svc_plumb.review.triage -> svc_plumb.review.modelClient 'three independent triage votes'
+    svc_plumb.review.modelClient -> svc_plumb.gateway.port 'step triage, with provider, model and connection profile'
+    svc_plumb.review.triage -> svc_plumb.review.contextReader 'depth normal, confidence 0.21, with reasons'
+    svc_plumb.review.contextReader -> svc_plumb.review.modelClient 'expectations from the context text, with quotes'
+    svc_plumb.review.contextReader -> svc_plumb.review.reviewers 'the change with its expectations'
+    svc_plumb.review.reviewers -> svc_plumb.review.rulesClient 'rules and conventions of each file'
+    svc_plumb.review.reviewers -> svc_plumb.review.modelClient 'candidates per category, each with a failure scenario'
+    svc_plumb.review.reviewers -> svc_plumb.review.verifier 'candidate findings'
+    svc_plumb.review.verifier -> svc_plumb.review.archiveClient 'the code each candidate depends on'
+    svc_plumb.review.archiveClient -> svc_plumb.archive.port 'reads those files of the snapshot by digest'
+    svc_plumb.review.verifier -> svc_plumb.review.modelClient 'an attempt to refute each candidate against the code'
+    svc_plumb.review.verifier -> svc_plumb.review.gate 'confirmed findings only'
+    svc_plumb.review.gate -> svc_plumb.review.repo 'already returned for the change before this revision?'
+    svc_plumb.review.gate -> svc_plumb.review.rulesClient 'learned rules and the finding limit'
+    svc_plumb.review.gate -> svc_plumb.review.anchor 'the ranked findings within the limit'
+    svc_plumb.review.anchor -> svc_plumb.review.repo 'writes the review result, unplaced findings listed apart'
+    integrator -> svc_plumb.intake.http 'getReview: the result'
+    svc_plumb.intake.http -> svc_plumb.intake.dispatcher 'the query'
+    svc_plumb.intake.dispatcher -> svc_plumb.review.port 'reads the result'
+    svc_plumb.review.port -> svc_plumb.review.repo 'reads the result'
+    integrator <- svc_plumb.intake.http 'getReview: findings, depth decision, expectations and cost'
+  }
+}

@@ -1,0 +1,34 @@
+// plumb — a maintainer disputes a finding with an argument; plumb checks once more.
+
+specification {
+  tag req-DIALOG-REVERIFY
+}
+
+views {
+  dynamic view uc_dispute {
+    #req-DIALOG-REVERIFY
+    title 'Flows / A disputed finding is checked once more'
+
+    integrator -> svc_plumb.intake.http 'postFeedback: the value is validated in the caller, here it is'
+    svc_plumb.intake.http -> svc_plumb.intake.dispatcher 'the validated event'
+    svc_plumb.intake.dispatcher -> svc_plumb.archive.port 'records the event before anything else'
+    svc_plumb.intake.dispatcher -> svc_plumb.outcomes.port 'hands over the reply'
+    svc_plumb.outcomes.port -> svc_plumb.outcomes.recorder 'the reply'
+    svc_plumb.outcomes.recorder -> svc_plumb.outcomes.classifier 'what does the reply mean?'
+    svc_plumb.outcomes.classifier -> svc_plumb.outcomes.modelClient 'false positive, with an argument'
+    svc_plumb.outcomes.classifier -> svc_plumb.outcomes.reviewClient 'verify once more, with the reply as added context'
+    svc_plumb.outcomes.reviewClient -> svc_plumb.review.port 'the one re-verification of the finding; a second one is refused'
+    svc_plumb.review.port -> svc_plumb.review.verifier 'the finding and the reply'
+    svc_plumb.review.verifier -> svc_plumb.review.archiveClient 'the caller the reply names'
+    svc_plumb.review.archiveClient -> svc_plumb.archive.port 'reads that file of the snapshot by digest'
+    svc_plumb.review.verifier -> svc_plumb.review.modelClient 'refute or confirm, given the argument'
+    svc_plumb.review.verifier -> svc_plumb.review.repo 'follow-up: withdrawn, with a short explanation'
+    integrator -> svc_plumb.intake.http 'getChange: the follow-up to show in the thread'
+    svc_plumb.intake.http -> svc_plumb.intake.dispatcher 'the query'
+    svc_plumb.intake.dispatcher -> svc_plumb.review.port 'reads the findings and follow-ups of the change'
+    svc_plumb.review.port -> svc_plumb.review.repo 'findings and follow-ups'
+    svc_plumb.intake.dispatcher -> svc_plumb.outcomes.port 'reads the outcomes of the change'
+    svc_plumb.outcomes.port -> svc_plumb.outcomes.repo 'outcomes and the closure'
+    integrator <- svc_plumb.intake.http 'getChange: findings with their outcome and follow-ups, joined by finding identity'
+  }
+}

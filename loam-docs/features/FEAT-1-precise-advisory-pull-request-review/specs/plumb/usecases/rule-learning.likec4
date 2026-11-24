@@ -1,0 +1,50 @@
+// plumb — repeated, similar dismissals become a rule, through a critic, a replay and shadow mode.
+
+specification {
+  tag req-LEARN-RULE-VALIDATION
+}
+
+views {
+  dynamic view uc_rule_learning {
+    #req-LEARN-RULE-VALIDATION
+    title 'Flows / A learned rule earns its place'
+
+    svc_plumb.tuning.scheduler -> svc_plumb.tuning.miner 'the nightly rule mining'
+    svc_plumb.tuning.miner -> svc_plumb.tuning.rulesClient 'the rule-mining thresholds of the project'
+    svc_plumb.tuning.rulesClient -> svc_plumb.rules.port 'reads the effective parameters'
+    svc_plumb.tuning.miner -> svc_plumb.tuning.outcomesClient 'dismissals in the window, with the findings they answered'
+    svc_plumb.tuning.outcomesClient -> svc_plumb.outcomes.port 'reads the dismissals'
+    svc_plumb.tuning.miner -> svc_plumb.tuning.modelClient 'embeddings of the claims inside each cluster'
+    svc_plumb.tuning.modelClient -> svc_plumb.gateway.port 'step embed, with provider, model, connection profile and limits'
+    svc_plumb.tuning.miner -> svc_plumb.tuning.repo 'the evidence of the candidate'
+    svc_plumb.tuning.miner -> svc_plumb.tuning.critic 'candidate: withhold value-object requests in src/api/dto/** — 3 dismissals, 2 people'
+    svc_plumb.tuning.critic -> svc_plumb.tuning.modelClient 'is the candidate broader than its evidence?'
+    svc_plumb.tuning.critic -> svc_plumb.tuning.rulesClient 'explicit rules and protected categories; registers the accepted candidate'
+    svc_plumb.tuning.rulesClient -> svc_plumb.rules.port 'registers the candidate before its replay'
+    svc_plumb.rules.port -> svc_plumb.rules.lifecycle 'candidate: no check added, no protected category, this project only'
+    svc_plumb.tuning.critic -> svc_plumb.tuning.replayer 'replay the accepted candidate'
+    svc_plumb.tuning.replayer -> svc_plumb.tuning.archiveClient 'a stratified sample of 300 archived requests, every reported miss in it'
+    svc_plumb.tuning.archiveClient -> svc_plumb.archive.port 'reads the sample and pins it'
+    svc_plumb.tuning.replayer -> svc_plumb.tuning.reviewClient 'replay each request under the candidate'
+    svc_plumb.tuning.reviewClient -> svc_plumb.review.port 'replay jobs naming the candidate: results come back, nothing is written'
+    svc_plumb.tuning.replayer -> svc_plumb.tuning.repo 'the sample and the replay result'
+    svc_plumb.tuning.replayer -> svc_plumb.tuning.promoter 'no high or critical finding lost, no new miss, utility up'
+    svc_plumb.tuning.promoter -> svc_plumb.tuning.rulesClient 'shadow mode for 10 reviews, naming the replay result'
+    svc_plumb.tuning.rulesClient -> svc_plumb.rules.port 'move the rule to shadow mode'
+    svc_plumb.rules.port -> svc_plumb.rules.lifecycle 'records the switch'
+    svc_plumb.tuning.scheduler -> svc_plumb.tuning.promoter 'the shadow-mode tally, after 10 reviews'
+    svc_plumb.tuning.promoter -> svc_plumb.tuning.reviewClient 'what did the shadow rule note it would have withheld?'
+    svc_plumb.tuning.reviewClient -> svc_plumb.review.port 'reads the shadow notes of those reviews'
+    svc_plumb.tuning.promoter -> svc_plumb.tuning.outcomesClient 'any reported miss the rule matches?'
+    svc_plumb.tuning.outcomesClient -> svc_plumb.outcomes.port 'reads missed defects since the last sweep'
+    svc_plumb.tuning.promoter -> svc_plumb.tuning.rulesClient 'the tally holds: ready for activation'
+    svc_plumb.tuning.rulesClient -> svc_plumb.rules.port 'activate the rule'
+    svc_plumb.rules.port -> svc_plumb.rules.lifecycle 'it withholds: risk-based approval waits for a maintainer'
+    maintainer -> svc_plumb.intake.http 'listRules: the rule awaiting a decision, with its provenance'
+    maintainer -> svc_plumb.intake.http 'decideRule: accept'
+    svc_plumb.intake.http -> svc_plumb.intake.dispatcher 'the decision'
+    svc_plumb.intake.dispatcher -> svc_plumb.rules.port 'hands over the decision'
+    svc_plumb.rules.port -> svc_plumb.rules.lifecycle 'activates the rule'
+    svc_plumb.rules.lifecycle -> svc_plumb.rules.repo 'the rule is active, with its provenance'
+  }
+}

@@ -1,0 +1,34 @@
+// plumb — a change confident enough to escalate starts an area audit that never holds the review.
+
+specification {
+  tag req-AUDIT-ON-ESCALATION
+}
+
+views {
+  dynamic view uc_escalation {
+    #req-AUDIT-ON-ESCALATION
+    title 'Flows / Escalation starts an area audit'
+
+    integrator -> svc_plumb.intake.http 'submitReview: a change that adds a migration, with a snapshot'
+    svc_plumb.intake.http -> svc_plumb.intake.dispatcher 'the validated command'
+    svc_plumb.intake.dispatcher -> svc_plumb.archive.port 'records the request before anything else'
+    svc_plumb.intake.dispatcher -> svc_plumb.review.port 'starts the review job with the request'
+    svc_plumb.review.port -> svc_plumb.review.triage 'the review job'
+    svc_plumb.review.triage -> svc_plumb.review.rulesClient 'escalation thresholds and the coalescing window'
+    svc_plumb.review.triage -> svc_plumb.review.modelClient 'three independent triage votes'
+    svc_plumb.review.triage -> svc_plumb.review.auditor 'confidence 0.86, at or above 0.8: audit the affected area'
+    svc_plumb.review.triage -> svc_plumb.review.contextReader 'the extended review goes on without waiting'
+    svc_plumb.review.auditor -> svc_plumb.review.repo 'no audit of this area within the coalescing window; records the audit job'
+    svc_plumb.review.auditor -> svc_plumb.review.archiveClient 'the files of the area'
+    svc_plumb.review.archiveClient -> svc_plumb.archive.port 'reads them from the snapshot by digest'
+    svc_plumb.review.auditor -> svc_plumb.review.reviewers 'the affected area — components from the context, or callers to depth 2 — without a diff'
+    svc_plumb.review.reviewers -> svc_plumb.review.verifier 'candidate findings in the area'
+    svc_plumb.review.verifier -> svc_plumb.review.gate 'confirmed findings'
+    svc_plumb.review.gate -> svc_plumb.review.anchor 'ranked findings'
+    svc_plumb.review.anchor -> svc_plumb.review.repo 'writes the audit result, apart from the review result'
+    integrator -> svc_plumb.intake.http 'getAudit: the audit result'
+    svc_plumb.intake.http -> svc_plumb.intake.dispatcher 'the query'
+    svc_plumb.intake.dispatcher -> svc_plumb.review.port 'reads the audit result'
+    svc_plumb.review.port -> svc_plumb.review.repo 'reads the audit result'
+  }
+}

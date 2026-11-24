@@ -1,0 +1,38 @@
+// plumb — what happened to the findings: replies, closure, the report.
+
+specification {
+  tag req-LEARN-OUTCOMES
+}
+
+views {
+  dynamic view uc_feedback {
+    #req-LEARN-OUTCOMES
+    title 'Flows / Feedback becomes outcomes'
+
+    integrator -> svc_plumb.intake.http 'postFeedback: a maintainer replied to a finding'
+    svc_plumb.intake.http -> svc_plumb.intake.dispatcher 'the validated event'
+    svc_plumb.intake.dispatcher -> svc_plumb.archive.port 'records the event before anything else'
+    svc_plumb.intake.dispatcher -> svc_plumb.outcomes.port 'hands over the reply'
+    svc_plumb.outcomes.port -> svc_plumb.outcomes.recorder 'the reply'
+    svc_plumb.outcomes.recorder -> svc_plumb.outcomes.classifier 'what does the reply mean?'
+    svc_plumb.outcomes.classifier -> svc_plumb.outcomes.rulesClient 'the model configured for reply classification'
+    svc_plumb.outcomes.rulesClient -> svc_plumb.rules.port 'reads the classification model of the project'
+    svc_plumb.outcomes.classifier -> svc_plumb.outcomes.modelClient 'classify the reply'
+    svc_plumb.outcomes.modelClient -> svc_plumb.gateway.port 'step classify, with provider, model, connection profile and limits'
+    svc_plumb.outcomes.recorder -> svc_plumb.outcomes.repo 'dismissed, class: a convention of this place'
+    integrator -> svc_plumb.intake.http 'postFeedback: the change was merged'
+    svc_plumb.intake.http -> svc_plumb.intake.dispatcher 'the validated event'
+    svc_plumb.intake.dispatcher -> svc_plumb.archive.port 'records the closure before anything else'
+    svc_plumb.intake.dispatcher -> svc_plumb.outcomes.port 'hands over the closure'
+    svc_plumb.outcomes.port -> svc_plumb.outcomes.recorder 'the closure'
+    svc_plumb.outcomes.recorder -> svc_plumb.outcomes.archiveClient 'which lines changed in later revisions?'
+    svc_plumb.outcomes.archiveClient -> svc_plumb.archive.port 'reads the later revisions of the change'
+    svc_plumb.outcomes.recorder -> svc_plumb.outcomes.reviewClient 'which findings were returned, and which does the final revision still produce?'
+    svc_plumb.outcomes.reviewClient -> svc_plumb.review.port 'reads the findings of the change and of its final revision'
+    svc_plumb.outcomes.recorder -> svc_plumb.outcomes.repo 'touched, confirmed addressed or unanswered, each with its evidence'
+    maintainer -> svc_plumb.intake.http 'getReport: the confirmed addressed share per category, with counts'
+    svc_plumb.intake.http -> svc_plumb.intake.dispatcher 'the query'
+    svc_plumb.intake.dispatcher -> svc_plumb.outcomes.port 'reads the report'
+    svc_plumb.outcomes.port -> svc_plumb.outcomes.repo 'outcomes in the window'
+  }
+}

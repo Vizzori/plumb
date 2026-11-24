@@ -1,0 +1,704 @@
+// FEAT-1 — architecture delta: plumb, the review core.
+//
+// Everything tagged #FEAT-1 is exactly what `loam archive` folds into
+// architecture/landscape.likec4. Everything else here is context for the diagram.
+//
+// The shape: plumb is one daemon made of bounded contexts. Each context owns its
+// store, is entered only through its port, and leaves only through its own adapter
+// for each dependency. Intake is the contract edge and stores nothing. The model
+// provider is reached only through the model gateway. Context dependencies point one
+// way: intake → archive, review, outcomes, rules; tuning → outcomes, archive, review,
+// rules, gateway; outcomes → archive, review, rules, gateway; review → archive, rules,
+// gateway. Tuning is entered only by its own scheduler.
+
+specification {
+  // Declared so this file parses — and previews — alone. The styles copy the
+  // fleet map's; the archive copies elements and edges, never this block.
+  element person {
+    style {
+      shape person
+    }
+  }
+  element softwareSystem
+  element container
+  element component
+  element database {
+    style {
+      shape storage
+    }
+  }
+  relationship calls {
+    color secondary
+    line solid
+    head normal
+  }
+  relationship readsWrites {
+    color green
+    head normal
+    tail normal
+  }
+  tag FEAT-1
+  tag external
+}
+
+model {
+  integrator = softwareSystem 'Integrator' {
+    #FEAT-1 #external
+    description 'Whatever connects plumb to a code host and to the team context — a CI job, a bot, a platform app. Gathers the code and the requirements, sends complete review packages and feedback, and shows the results. Not part of plumb'
+  }
+
+  maintainer = person 'Maintainer' {
+    #FEAT-1
+    description 'Registers the rules a project reviews by, decides on rule candidates, returns to an earlier configuration, and reads the usefulness report'
+  }
+
+  llm = softwareSystem 'Model provider' {
+    #FEAT-1 #external
+    description 'The large language model (LLM) endpoints a project names per step, hosted or self-hosted'
+  }
+
+  svc_plumb = softwareSystem 'plumb' {
+    #FEAT-1
+    description 'Review core run as a daemon: turns a complete review package into verified, placed findings, never repeats itself, and learns from what reviewers did with its findings'
+    metadata { service 'plumb' }
+
+    // ── Intake: the contract edge. Stores nothing, decides nothing. ──────────────
+    intake = container 'Intake' {
+      #FEAT-1
+      description 'The contract edge: authenticates the calling project, checks each message against the published contract, has the archive record it, and hands it to the context that owns the work. Holds no store and no business rule'
+
+      http = component 'HTTP API' {
+        #FEAT-1
+        description 'Serves the fifteen contract operations: parses and validates each message and maps it to a command; refuses a malformed one with a stable error code'
+      }
+      dispatcher = component 'Dispatcher' {
+        #FEAT-1
+        description 'Has the archive record each accepted message before anything else, then hands it to its owner: review and audit jobs to Review, feedback to Learning, packs, configurations and rule decisions to Rules. Relays the owner refusal as it came, and answers the state of a change by joining what Review and Learning return for it by finding identity'
+      }
+    }
+
+    // ── Archive: owns the immutable record of everything accepted. ──────────────
+    archive = container 'Archive' {
+      #FEAT-1
+      description 'Owns the record of everything plumb accepted — requests, snapshot manifests, file blobs and feedback events — kept exactly as it came and addressed by content digest'
+
+      port = component 'Archive port' {
+        #FEAT-1
+        description 'Appends records and reads them by digest or by change; takes a snapshot manifest and answers with the files it lacks; stores each file once by its digest; pins the requests of the replay sample. Never changes a record'
+      }
+      repo = component 'Archive repository' {
+        #FEAT-1
+        description 'The only code that reads or writes the request archive and the snapshot blobs; maps rows and objects to records at the boundary'
+      }
+      store = database 'Request archive' {
+        #FEAT-1
+        description 'Requests, snapshot manifests, feedback events, refusals and replay pins as immutable records in the Archive schema. Owned by Archive'
+      }
+      blobs = database 'Snapshot blobs' {
+        #FEAT-1
+        description 'File contents in object storage, keyed by digest and stored once however many snapshots share them. A blob is removed only when no pinned request references it and it is older than the retention period. Owned by Archive'
+      }
+    }
+
+    // ── Review: owns findings. ──────────────────────────────────────────────────
+    review = container 'Review engine' {
+      #FEAT-1
+      description 'Owns findings: turns a request into verified, placed findings, keeps their identities across revisions, and answers for review results, audit results and follow-ups. Runs no code from a request'
+
+      port = component 'Review port' {
+        #FEAT-1
+        description 'Starts review, audit, re-verification and replay jobs, and answers queries for results, findings and follow-ups. A replay job names the candidate it runs under, returns its result to the caller, starts no audit and writes nothing; a second re-verification of the same finding is refused'
+      }
+      triage = component 'Triage' {
+        #FEAT-1
+        description 'Decides the depth of a review — normal or extended, with or without an area audit — and states its confidence and the reasons'
+      }
+      contextReader = component 'Context reader' {
+        #FEAT-1
+        description 'Turns the context items of a request into checkable expectations, each quoting the text it came from'
+      }
+      reviewers = component 'Reviewers' {
+        #FEAT-1
+        description 'Category-scoped passes that propose candidate findings, each with the lines it concerns and a concrete failure scenario'
+      }
+      verifier = component 'Verifier' {
+        #FEAT-1
+        description 'An independent pass that tries to refute each candidate against the code, without seeing the reasoning that produced it; also re-checks a finding once when a maintainer disputes it'
+      }
+      gate = component 'Gate' {
+        #FEAT-1
+        description 'Drops what was already returned for the change before this revision, applies conventions and active learned rules, notes what shadow rules would have withheld, and keeps the ranked set within the limit'
+      }
+      anchor = component 'Anchor' {
+        #FEAT-1
+        description 'Places each finding — on a line of the diff for a review, on a file and line for an audit — and lists the findings it cannot place'
+      }
+      auditor = component 'Auditor' {
+        #FEAT-1
+        description 'Reviews an area of a snapshot without a diff — on an audit request, or when escalation reaches the audit threshold'
+      }
+      repo = component 'Ledger repository' {
+        #FEAT-1
+        description 'The only code that reads or writes the finding ledger; maps its rows to findings, results and follow-ups at the boundary'
+      }
+      rulesClient = component 'Rules client' {
+        #FEAT-1
+        description 'The one door from Review to the rule registry: asks for the effective rules and parameters of a job — limits, the model of each step, thresholds, and the candidate a replay runs under — and keeps the versions they came from'
+      }
+      modelClient = component 'Model client' {
+        #FEAT-1
+        description 'The one door from Review to the model gateway: each request carries the job id, the step, the provider, model and connection profile the parameters name for that step, the job limits and whether it is a replay'
+      }
+      archiveClient = component 'Archive client' {
+        #FEAT-1
+        description 'The one door from Review to the archive: reads the files of a snapshot by its digest'
+      }
+      store = database 'Finding ledger' {
+        #FEAT-1
+        description 'Finding identities, review and audit results, follow-ups and the state of each change. Owned by Review'
+      }
+    }
+
+    // ── Rules: owns rules and configuration. ────────────────────────────────────
+    rules = container 'Rule registry' {
+      #FEAT-1
+      description 'Owns rules and configuration: rule packs, project configurations, path scopes, learned rules with their lifecycle, parameters and configuration versions'
+
+      port = component 'Rules port' {
+        #FEAT-1
+        description 'Answers the effective rules and parameters of a file set with the versions they came from; registers packs and configurations; moves rules through their lifecycle; switches configuration versions'
+      }
+      resolver = component 'Layer resolver' {
+        #FEAT-1
+        description 'Applies the five layers in one fixed order — built-in, packs, project, path scopes, learned — so the nearest wins and an explicit setting beats a learned one'
+      }
+      lifecycle = component 'Rule lifecycle' {
+        #FEAT-1
+        description 'Moves a rule from candidate to shadow to active or retired, waits for a maintainer where approval is required, and keeps pinned parameters out of reach of tuning. Refuses an unpublished pack, and a learned rule that would add a check, touch a protected category or come from another project'
+      }
+      repo = component 'Rule repository' {
+        #FEAT-1
+        description 'The only code that reads or writes the rule store; maps its rows to rules, packs and configuration versions at the boundary'
+      }
+      store = database 'Rule store' {
+        #FEAT-1
+        description 'Rule packs, project configurations, learned rules with their provenance, parameters and configuration versions. Owned by Rule registry'
+      }
+    }
+
+    // ── Outcomes: owns what happened to each finding. ───────────────────────────
+    outcomes = container 'Outcomes' {
+      #FEAT-1
+      description 'Owns what happened to each finding: takes feedback events, classifies replies, asks once for a re-verification of a dispute, and records outcomes from facts — touched, confirmed addressed, dismissed or unanswered'
+
+      port = component 'Outcomes port' {
+        #FEAT-1
+        description 'Takes feedback events; answers the usefulness report, the outcomes of a change, and the dismissals, missed defects and depth outcomes Tuning reads'
+      }
+      recorder = component 'Outcome recorder' {
+        #FEAT-1
+        description 'Derives outcomes from later revisions, feedback and closure: touched when the lines changed, confirmed addressed when the final revision no longer returns the finding, dismissed by a maintainer or member, unanswered otherwise'
+      }
+      classifier = component 'Reply classifier' {
+        #FEAT-1
+        description 'Reads what a reply to a finding means — agreed, false positive, true but minor, a convention of this place, later, or a question — and asks for one re-verification when a maintainer disputes a finding with an argument'
+      }
+      repo = component 'Outcome repository' {
+        #FEAT-1
+        description 'The only code that reads or writes the outcome store; maps its rows to outcomes, reply classes and missed defects at the boundary'
+      }
+      archiveClient = component 'Archive client' {
+        #FEAT-1
+        description 'The one door from Outcomes to the archive: reads the later revisions of a change'
+      }
+      reviewClient = component 'Review client' {
+        #FEAT-1
+        description 'The one door from Outcomes to the review engine: reads the findings of a change and of its final revision, and asks for a re-verification'
+      }
+      rulesClient = component 'Rules client' {
+        #FEAT-1
+        description 'The one door from Outcomes to the rule registry: reads the model configured for reply classification'
+      }
+      modelClient = component 'Model client' {
+        #FEAT-1
+        description 'The one door from Outcomes to the model gateway: reply classification, each request carrying its job id, step, provider, model, connection profile and limits'
+      }
+      store = database 'Outcome store' {
+        #FEAT-1
+        description 'Outcomes with the facts they came from, reply classes with the reply text, reported missed defects and depth outcomes in the Outcomes schema. Owned by Outcomes'
+      }
+    }
+
+    // ── Tuning: owns what is learned from outcomes. Entered only by its scheduler. ─
+    tuning = container 'Tuning' {
+      #FEAT-1
+      description 'Owns what is learned from outcomes: on its schedule, forms rule candidates from similar dismissals, has them criticised and replayed, tallies shadow mode, sweeps reported misses, calibrates depth, and asks the rule registry for every switch. No other context calls it'
+
+      scheduler = component 'Scheduler' {
+        #FEAT-1
+        description 'The only entry of Tuning: starts rule mining, the shadow-mode tally, rule revisits, the missed-defect sweep and depth calibration on their schedule'
+      }
+      miner = component 'Rule miner' {
+        #FEAT-1
+        description 'Clusters dismissals by category, rule, path scope and syntax shape, then compares claims by embedding inside each cluster, and forms a rule candidate once a cluster reaches the configured thresholds'
+      }
+      critic = component 'Rule critic' {
+        #FEAT-1
+        description 'Rejects a candidate that is broader than its evidence, conflicts with an explicit rule, or touches a protected category; registers an accepted one with the rule registry before its replay'
+      }
+      replayer = component 'Replayer' {
+        #FEAT-1
+        description 'Draws a stratified replay sample with every reported miss in it, pins it in the archive, replays it under a candidate within the cost limit, and compares the results with what happened'
+      }
+      promoter = component 'Promoter' {
+        #FEAT-1
+        description 'Applies the gate — no addressed high or critical finding lost, no new miss, then utility — tallies shadow mode, sends rules that a reported miss matches back to shadow mode, calibrates unpinned depth thresholds, and asks the rule registry for each switch'
+      }
+      repo = component 'Tuning repository' {
+        #FEAT-1
+        description 'The only code that reads or writes the tuning store; maps its rows to candidate evidence, replay results and decisions at the boundary'
+      }
+      outcomesClient = component 'Outcomes client' {
+        #FEAT-1
+        description 'The one door from Tuning to Outcomes: reads dismissals, reported missed defects and depth outcomes'
+      }
+      archiveClient = component 'Archive client' {
+        #FEAT-1
+        description 'The one door from Tuning to the archive: reads archived requests and pins or unpins the replay sample'
+      }
+      reviewClient = component 'Review client' {
+        #FEAT-1
+        description 'The one door from Tuning to the review engine: asks for replays under a candidate and reads what shadow rules would have withheld'
+      }
+      rulesClient = component 'Rules client' {
+        #FEAT-1
+        description 'The one door from Tuning to the rule registry: reads parameters and explicit rules, registers candidates, and asks for rule state and configuration switches'
+      }
+      modelClient = component 'Model client' {
+        #FEAT-1
+        description 'The one door from Tuning to the model gateway: embeddings and rule criticism, each request carrying its job id, step, provider, model, connection profile and limits'
+      }
+      store = database 'Tuning store' {
+        #FEAT-1
+        description 'Candidate evidence, replay samples and results, shadow tallies, depth calibration and every switch decision in the Tuning schema. Owned by Tuning'
+      }
+    }
+
+    // ── Model gateway: owns the only way out. ───────────────────────────────────
+    gateway = container 'Model gateway' {
+      #FEAT-1
+      description 'Owns the only way out of plumb: routes each request to the provider and model it names, enforces the limits before sending, and records every call'
+
+      port = component 'Model port' {
+        #FEAT-1
+        description 'Takes a model request that carries its job id, step, provider, model, connection profile name, the job limits and a replay flag, and refuses one that lacks any of them'
+      }
+      budget = component 'Budget guard' {
+        #FEAT-1
+        description 'Checks the token, step, time and spend limits of the review before a request leaves'
+      }
+      router = component 'Provider router' {
+        #FEAT-1
+        description 'Routes to the named provider and model; an unsupported provider fails fast and there is no hidden fallback'
+      }
+      providers = component 'Provider adapters' {
+        #FEAT-1
+        description 'One adapter per provider family: the only code that holds provider credentials and talks to a provider. Retries a rate limit or a server error with backoff within the job limits; any other error fails at once'
+      }
+      repo = component 'Call log repository' {
+        #FEAT-1
+        description 'The only code that reads or writes the model call log; maps its rows to calls and recorded responses at the boundary'
+      }
+      store = database 'Model call log' {
+        #FEAT-1
+        description 'Every model request, response, token count and cost, and the recorded responses replays reuse. Owned by Model gateway'
+      }
+    }
+  }
+
+  // ── The contract: what the integrator calls. ────────────────────────────────
+  integrator -[calls]-> svc_plumb.intake.http 'Registers the snapshot manifest of a revision and learns which files are missing' {
+    #FEAT-1
+    metadata { op 'putSnapshot' }
+  }
+  integrator -[calls]-> svc_plumb.intake.http 'Uploads each missing file once' {
+    #FEAT-1
+    metadata { op 'uploadBlob' }
+  }
+  integrator -[calls]-> svc_plumb.intake.http 'Submits a review request' {
+    #FEAT-1
+    metadata { op 'submitReview' }
+  }
+  integrator -[calls]-> svc_plumb.intake.http 'Fetches a review result, waiting up to a minute for it' {
+    #FEAT-1
+    metadata { op 'getReview' }
+  }
+  integrator -[calls]-> svc_plumb.intake.http 'Fetches the state of a change' {
+    #FEAT-1
+    metadata { op 'getChange' }
+  }
+  integrator -[calls]-> svc_plumb.intake.http 'Sends feedback, closures and missed defects' {
+    #FEAT-1
+    metadata { op 'postFeedback' }
+  }
+  integrator -[calls]-> svc_plumb.intake.http 'Submits an audit request' {
+    #FEAT-1
+    metadata { op 'submitAudit' }
+  }
+  integrator -[calls]-> svc_plumb.intake.http 'Fetches an audit result, waiting up to a minute for it' {
+    #FEAT-1
+    metadata { op 'getAudit' }
+  }
+
+  // ── The contract: what a maintainer calls. ──────────────────────────────────
+  maintainer -[calls]-> svc_plumb.intake.http 'Publishes a rule pack version' {
+    #FEAT-1
+    metadata { op 'putRulePack' }
+  }
+  maintainer -[calls]-> svc_plumb.intake.http 'Registers the project configuration' {
+    #FEAT-1
+    metadata { op 'putProjectConfig' }
+  }
+  maintainer -[calls]-> svc_plumb.intake.http 'Lists rules and rule candidates' {
+    #FEAT-1
+    metadata { op 'listRules' }
+  }
+  maintainer -[calls]-> svc_plumb.intake.http 'Accepts or rejects a rule candidate' {
+    #FEAT-1
+    metadata { op 'decideRule' }
+  }
+  maintainer -[calls]-> svc_plumb.intake.http 'Lists configuration versions' {
+    #FEAT-1
+    metadata { op 'listConfigurations' }
+  }
+  maintainer -[calls]-> svc_plumb.intake.http 'Returns to an earlier configuration' {
+    #FEAT-1
+    metadata { op 'activateConfiguration' }
+  }
+  maintainer -[calls]-> svc_plumb.intake.http 'Reads the usefulness report' {
+    #FEAT-1
+    metadata { op 'getReport' }
+  }
+
+  // ── Intake ───────────────────────────────────────────────────────────────────
+  svc_plumb.intake.http -[calls]-> svc_plumb.intake.dispatcher 'Hands over each validated command' {
+    #FEAT-1
+  }
+  svc_plumb.intake.dispatcher -[calls]-> svc_plumb.archive.port 'Has each accepted message recorded before anything else — snapshot manifests and file blobs included — and a refusal recorded when the owning context refuses it' {
+    #FEAT-1
+  }
+  svc_plumb.intake.dispatcher -[calls]-> svc_plumb.review.port 'Starts review and audit jobs with their request; reads results, findings and follow-ups' {
+    #FEAT-1
+  }
+  svc_plumb.intake.dispatcher -[calls]-> svc_plumb.outcomes.port 'Hands over feedback events; reads the usefulness report and the outcomes of a change' {
+    #FEAT-1
+  }
+  svc_plumb.intake.dispatcher -[calls]-> svc_plumb.rules.port 'Registers packs and configurations; lists and decides rules; switches configuration versions; relays the registry refusals' {
+    #FEAT-1
+  }
+
+  // ── Archive ──────────────────────────────────────────────────────────────────
+  svc_plumb.archive.port -[calls]-> svc_plumb.archive.repo 'Appends and reads records, stores file blobs, pins and unpins replay requests' {
+    #FEAT-1
+  }
+  svc_plumb.archive.repo -[readsWrites]-> svc_plumb.archive.store 'Appends records keyed by content digest and reads them by digest or change; never rewrites a record' {
+    #FEAT-1
+  }
+  svc_plumb.archive.repo -[readsWrites]-> svc_plumb.archive.blobs 'Writes a file blob once under its digest and reads it back; removes only unpinned blobs past retention' {
+    #FEAT-1
+  }
+
+  // ── Review: inside ───────────────────────────────────────────────────────────
+  svc_plumb.review.port -[calls]-> svc_plumb.review.triage 'Starts a review job, or a replay job that names its candidate' {
+    #FEAT-1
+  }
+  svc_plumb.review.port -[calls]-> svc_plumb.review.auditor 'Starts an audit job' {
+    #FEAT-1
+  }
+  svc_plumb.review.port -[calls]-> svc_plumb.review.verifier 'Starts the one re-verification of a disputed finding; refuses a second one' {
+    #FEAT-1
+  }
+  svc_plumb.review.port -[calls]-> svc_plumb.review.repo 'Reads results, findings and follow-ups for a query' {
+    #FEAT-1
+  }
+  svc_plumb.review.triage -[calls]-> svc_plumb.review.contextReader 'Hands over the request with its depth decision' {
+    #FEAT-1
+  }
+  svc_plumb.review.contextReader -[calls]-> svc_plumb.review.reviewers 'Hands over the change with its expectations' {
+    #FEAT-1
+  }
+  svc_plumb.review.reviewers -[calls]-> svc_plumb.review.verifier 'Hands over candidate findings' {
+    #FEAT-1
+  }
+  svc_plumb.review.verifier -[calls]-> svc_plumb.review.gate 'Hands over confirmed findings' {
+    #FEAT-1
+  }
+  svc_plumb.review.gate -[calls]-> svc_plumb.review.anchor 'Hands over the ranked findings to place' {
+    #FEAT-1
+  }
+  svc_plumb.review.triage -[calls]-> svc_plumb.review.auditor 'Starts an area audit when escalation reaches the audit threshold — never during a replay' {
+    #FEAT-1
+  }
+  svc_plumb.review.auditor -[calls]-> svc_plumb.review.reviewers 'Hands over an area to review without a diff' {
+    #FEAT-1
+  }
+  svc_plumb.review.gate -[calls]-> svc_plumb.review.repo 'Asks which findings were already returned for the change before this revision' {
+    #FEAT-1
+  }
+  svc_plumb.review.anchor -[calls]-> svc_plumb.review.repo 'Writes the review or audit result — never during a replay' {
+    #FEAT-1
+  }
+  svc_plumb.review.verifier -[calls]-> svc_plumb.review.repo 'Writes the follow-up on a disputed finding' {
+    #FEAT-1
+  }
+  svc_plumb.review.repo -[readsWrites]-> svc_plumb.review.store 'Writes results, finding identities and follow-ups per change and revision; reads them back by change' {
+    #FEAT-1
+  }
+  svc_plumb.review.triage -[calls]-> svc_plumb.review.rulesClient 'Asks for the job effective parameters: limits, the model of each step and the escalation thresholds' {
+    #FEAT-1
+  }
+  svc_plumb.review.reviewers -[calls]-> svc_plumb.review.rulesClient 'Asks for the effective rules and conventions of each file' {
+    #FEAT-1
+  }
+  svc_plumb.review.gate -[calls]-> svc_plumb.review.rulesClient 'Asks for the active and shadow learned rules and the finding limit' {
+    #FEAT-1
+  }
+  svc_plumb.review.triage -[calls]-> svc_plumb.review.modelClient 'Asks for independent triage votes' {
+    #FEAT-1
+  }
+  svc_plumb.review.contextReader -[calls]-> svc_plumb.review.modelClient 'Asks for expectations from context text' {
+    #FEAT-1
+  }
+  svc_plumb.review.reviewers -[calls]-> svc_plumb.review.modelClient 'Asks for candidate findings per category' {
+    #FEAT-1
+  }
+  svc_plumb.review.verifier -[calls]-> svc_plumb.review.modelClient 'Asks for an attempt to refute each candidate' {
+    #FEAT-1
+  }
+
+  // ── Review: the only ways out ────────────────────────────────────────────────
+  svc_plumb.review.rulesClient -[calls]-> svc_plumb.rules.port 'Asks for effective rules and parameters, with their versions' {
+    #FEAT-1
+  }
+  svc_plumb.review.modelClient -[calls]-> svc_plumb.gateway.port 'Sends each model request with its job id, step, provider, model, connection profile, limits and replay flag' {
+    #FEAT-1
+  }
+
+  svc_plumb.review.auditor -[calls]-> svc_plumb.review.repo 'Looks for an audit of the same area within the coalescing window; records the audit job' {
+    #FEAT-1
+  }
+  svc_plumb.review.auditor -[calls]-> svc_plumb.review.archiveClient 'Asks for the files of the area in the snapshot' {
+    #FEAT-1
+  }
+  svc_plumb.review.reviewers -[calls]-> svc_plumb.review.archiveClient 'Asks for files of the snapshot beyond the diff in an extended review' {
+    #FEAT-1
+  }
+  svc_plumb.review.verifier -[calls]-> svc_plumb.review.archiveClient 'Asks for the code a candidate depends on' {
+    #FEAT-1
+  }
+  svc_plumb.review.archiveClient -[calls]-> svc_plumb.archive.port 'Reads snapshot files by digest' {
+    #FEAT-1
+  }
+
+  // ── Rules ────────────────────────────────────────────────────────────────────
+  svc_plumb.rules.port -[calls]-> svc_plumb.rules.resolver 'Asks for the effective rules and parameters of a file set, or of a replay with its candidate' {
+    #FEAT-1
+  }
+  svc_plumb.rules.port -[calls]-> svc_plumb.rules.lifecycle 'Registers, moves or switches rules and configurations, or refuses with the reason' {
+    #FEAT-1
+  }
+  svc_plumb.rules.resolver -[calls]-> svc_plumb.rules.repo 'Reads the layers and the active configuration' {
+    #FEAT-1
+  }
+  svc_plumb.rules.lifecycle -[calls]-> svc_plumb.rules.repo 'Writes rule states and configuration versions' {
+    #FEAT-1
+  }
+  svc_plumb.rules.repo -[readsWrites]-> svc_plumb.rules.store 'Writes rule states and configuration versions as new versions; reads the layers by project and version' {
+    #FEAT-1
+  }
+
+  // ── Outcomes: inside ─────────────────────────────────────────────────────────
+  svc_plumb.outcomes.port -[calls]-> svc_plumb.outcomes.recorder 'Hands over feedback events' {
+    #FEAT-1
+  }
+  svc_plumb.outcomes.port -[calls]-> svc_plumb.outcomes.repo 'Reads the report, the outcomes of a change, and the dismissals, misses and depth outcomes asked for' {
+    #FEAT-1
+  }
+  svc_plumb.outcomes.recorder -[calls]-> svc_plumb.outcomes.classifier 'Hands over replies to classify' {
+    #FEAT-1
+  }
+  svc_plumb.outcomes.recorder -[calls]-> svc_plumb.outcomes.archiveClient 'Asks for the later revisions of the change' {
+    #FEAT-1
+  }
+  svc_plumb.outcomes.recorder -[calls]-> svc_plumb.outcomes.reviewClient 'Asks for the findings returned for the change and for its final revision; an event about an unknown finding is refused' {
+    #FEAT-1
+  }
+  svc_plumb.outcomes.recorder -[calls]-> svc_plumb.outcomes.repo 'Writes outcomes with the facts they came from, and reported missed defects' {
+    #FEAT-1
+  }
+  svc_plumb.outcomes.classifier -[calls]-> svc_plumb.outcomes.modelClient 'Asks for the class of a reply' {
+    #FEAT-1
+  }
+  svc_plumb.outcomes.classifier -[calls]-> svc_plumb.outcomes.reviewClient 'Asks for one more verification of a disputed finding' {
+    #FEAT-1
+  }
+  svc_plumb.outcomes.classifier -[calls]-> svc_plumb.outcomes.rulesClient 'Asks for the model configured for reply classification' {
+    #FEAT-1
+  }
+  svc_plumb.outcomes.repo -[readsWrites]-> svc_plumb.outcomes.store 'Writes outcomes, reply classes and missed defects by project and change; reads them by window' {
+    #FEAT-1
+  }
+
+  // ── Outcomes: the only ways out ──────────────────────────────────────────────
+  svc_plumb.outcomes.archiveClient -[calls]-> svc_plumb.archive.port 'Reads the later revisions of a change' {
+    #FEAT-1
+  }
+  svc_plumb.outcomes.reviewClient -[calls]-> svc_plumb.review.port 'Reads findings; asks for the one re-verification of a dispute' {
+    #FEAT-1
+  }
+  svc_plumb.outcomes.rulesClient -[calls]-> svc_plumb.rules.port 'Reads the classification model of the project' {
+    #FEAT-1
+  }
+  svc_plumb.outcomes.modelClient -[calls]-> svc_plumb.gateway.port 'Sends each model request with its job id, step, provider, model, connection profile, limits and replay flag' {
+    #FEAT-1
+  }
+
+  // ── Tuning: inside ───────────────────────────────────────────────────────────
+  svc_plumb.tuning.scheduler -[calls]-> svc_plumb.tuning.miner 'Starts rule mining on its schedule' {
+    #FEAT-1
+  }
+  svc_plumb.tuning.scheduler -[calls]-> svc_plumb.tuning.promoter 'Starts the shadow-mode tally, rule revisits, the missed-defect sweep and depth calibration on their schedule' {
+    #FEAT-1
+  }
+  svc_plumb.tuning.miner -[calls]-> svc_plumb.tuning.outcomesClient 'Asks for the dismissals in the window, with the findings they answered' {
+    #FEAT-1
+  }
+  svc_plumb.tuning.miner -[calls]-> svc_plumb.tuning.rulesClient 'Asks for the rule-mining thresholds of the project' {
+    #FEAT-1
+  }
+  svc_plumb.tuning.miner -[calls]-> svc_plumb.tuning.modelClient 'Asks for embeddings of claims inside a cluster' {
+    #FEAT-1
+  }
+  svc_plumb.tuning.miner -[calls]-> svc_plumb.tuning.repo 'Writes the evidence of each candidate' {
+    #FEAT-1
+  }
+  svc_plumb.tuning.miner -[calls]-> svc_plumb.tuning.critic 'Hands over rule candidates' {
+    #FEAT-1
+  }
+  svc_plumb.tuning.critic -[calls]-> svc_plumb.tuning.modelClient 'Asks whether a candidate is broader than its evidence' {
+    #FEAT-1
+  }
+  svc_plumb.tuning.critic -[calls]-> svc_plumb.tuning.rulesClient 'Asks for explicit rules and protected categories; registers an accepted candidate before its replay' {
+    #FEAT-1
+  }
+  svc_plumb.tuning.critic -[calls]-> svc_plumb.tuning.replayer 'Asks for a replay of a candidate it accepted' {
+    #FEAT-1
+  }
+  svc_plumb.tuning.replayer -[calls]-> svc_plumb.tuning.archiveClient 'Asks for archived requests for the sample and pins them' {
+    #FEAT-1
+  }
+  svc_plumb.tuning.replayer -[calls]-> svc_plumb.tuning.reviewClient 'Asks for replays under a candidate' {
+    #FEAT-1
+  }
+  svc_plumb.tuning.replayer -[calls]-> svc_plumb.tuning.repo 'Writes the sample and the replay results' {
+    #FEAT-1
+  }
+  svc_plumb.tuning.replayer -[calls]-> svc_plumb.tuning.promoter 'Hands over replay results' {
+    #FEAT-1
+  }
+  svc_plumb.tuning.promoter -[calls]-> svc_plumb.tuning.reviewClient 'Asks what shadow rules would have withheld' {
+    #FEAT-1
+  }
+  svc_plumb.tuning.promoter -[calls]-> svc_plumb.tuning.outcomesClient 'Asks for reported missed defects and depth outcomes since the last sweep' {
+    #FEAT-1
+  }
+  svc_plumb.tuning.promoter -[calls]-> svc_plumb.tuning.rulesClient 'Asks for shadow mode, activation, a revisit or a configuration switch, naming the evidence' {
+    #FEAT-1
+  }
+  svc_plumb.tuning.promoter -[calls]-> svc_plumb.tuning.repo 'Records each decision, tally and calibration' {
+    #FEAT-1
+  }
+  svc_plumb.tuning.repo -[readsWrites]-> svc_plumb.tuning.store 'Writes candidate evidence, samples, results, tallies and decisions; reads them by candidate and project' {
+    #FEAT-1
+  }
+
+  // ── Tuning: the only ways out ────────────────────────────────────────────────
+  svc_plumb.tuning.outcomesClient -[calls]-> svc_plumb.outcomes.port 'Reads dismissals, missed defects and depth outcomes' {
+    #FEAT-1
+  }
+  svc_plumb.tuning.archiveClient -[calls]-> svc_plumb.archive.port 'Reads archived requests; pins and unpins the replay sample' {
+    #FEAT-1
+  }
+  svc_plumb.tuning.reviewClient -[calls]-> svc_plumb.review.port 'Asks for replays; reads shadow notes' {
+    #FEAT-1
+  }
+  svc_plumb.tuning.rulesClient -[calls]-> svc_plumb.rules.port 'Reads parameters and rules; registers candidates; asks for rule state and configuration switches' {
+    #FEAT-1
+  }
+  svc_plumb.tuning.modelClient -[calls]-> svc_plumb.gateway.port 'Sends each model request with its job id, step, provider, model, connection profile, limits and replay flag' {
+    #FEAT-1
+  }
+
+  // ── Model gateway ────────────────────────────────────────────────────────────
+  svc_plumb.gateway.port -[calls]-> svc_plumb.gateway.budget 'Checks the job limits against its spend so far before a request leaves' {
+    #FEAT-1
+  }
+  svc_plumb.gateway.port -[calls]-> svc_plumb.gateway.router 'Routes the request to the provider and model it names' {
+    #FEAT-1
+  }
+  svc_plumb.gateway.port -[calls]-> svc_plumb.gateway.repo 'Records each call with its tokens and cost; answers a replay from the recorded response' {
+    #FEAT-1
+  }
+  svc_plumb.gateway.budget -[calls]-> svc_plumb.gateway.repo 'Reads the spend so far of the job' {
+    #FEAT-1
+  }
+  svc_plumb.gateway.router -[calls]-> svc_plumb.gateway.providers 'Hands over the request for the named provider' {
+    #FEAT-1
+  }
+  svc_plumb.gateway.providers -[calls]-> llm 'Sends the prompt to the named provider endpoint with the profile credentials; retries a rate limit or a server error with backoff within the job limits' {
+    #FEAT-1
+  }
+  svc_plumb.gateway.repo -[readsWrites]-> svc_plumb.gateway.store 'Appends each call with its tokens and cost; reads spend by job and recorded responses by request hash' {
+    #FEAT-1
+  }
+}
+
+views {
+  view feat_1 {
+    title 'Architecture / plumb and who talks to it'
+    include *
+  }
+  view feat_1_plumb of svc_plumb {
+    title 'Architecture / Bounded contexts'
+    include *
+    include svc_plumb.archive.store, svc_plumb.archive.blobs, svc_plumb.review.store, svc_plumb.rules.store, svc_plumb.outcomes.store, svc_plumb.tuning.store, svc_plumb.gateway.store
+  }
+  view feat_1_intake of svc_plumb.intake {
+    title 'Architecture / Intake'
+    include *
+  }
+  view feat_1_review of svc_plumb.review {
+    title 'Architecture / Review engine'
+    include *
+  }
+  view feat_1_rules of svc_plumb.rules {
+    title 'Architecture / Rule registry'
+    include *
+  }
+  view feat_1_outcomes of svc_plumb.outcomes {
+    title 'Architecture / Outcomes'
+    include *
+  }
+  view feat_1_tuning of svc_plumb.tuning {
+    title 'Architecture / Tuning'
+    include *
+  }
+  view feat_1_gateway of svc_plumb.gateway {
+    title 'Architecture / Model gateway'
+    include *
+  }
+  view feat_1_archive of svc_plumb.archive {
+    title 'Architecture / Archive'
+    include *
+  }
+}

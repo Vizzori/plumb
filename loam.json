@@ -1,0 +1,24 @@
+{
+  "docsDir": "loam-docs",
+  "service": "plumb",
+  "agentTools": [
+    "claude"
+  ],
+  "agentProfile": "full",
+  "agentFiles": {
+    ".claude/commands/loam-adopt.md": "42f92fb75c21319347905c0e92942fd4700fb0665833343313cfcf3826c327ba",
+    ".claude/commands/loam-feature.md": "539bcdef8f6a41308c28175850a4a07b62789429e7f4c506edb9098517241434",
+    ".claude/commands/loam-implement.md": "c847cc79e7648cf37f0c53647f4787834c0d849168e65922b20930e67b0665ac",
+    ".claude/commands/loam-check.md": "dec32461297222bb5275d9cf08d1f8001e6145f0fa37945044e5c1b61214abf8",
+    ".claude/commands/loam-verify.md": "94cc3c7315e33d4ab39004e38b015b149e3217a3b07b8905a3c2eacde25b9b26",
+    ".claude/commands/loam-ship.md": "dc888267039e3dcd27c070ded8805fc681d00a1d8ad5633ae7da34f27336baaa",
+    ".claude/commands/loam-report.md": "7265286457ada5ddb5220005dfcb043f4be494428677e5aeeb79b0fcd4a980b9",
+    ".claude/skills/loam-adopt/SKILL.md": "67527261f410ea9e6839a7b5232147ebbe41f36c0cfb46121040161648e7e2d0",
+    ".claude/skills/loam-feature/SKILL.md": "0f55cb15e264fc46d2500f0c9fb3cd4f71ee1655cc7dd29142003b7058afdcf4",
+    ".claude/skills/loam-implement/SKILL.md": "4f22b9d6005fac48f9a56e6c94482279b42b5c2242b92adcf5cd3cc8c9318850",
+    ".claude/skills/loam-check/SKILL.md": "d75b6a970fcc6c293d87e59775632c10472c96c8d4df5389c413e4814ef654a8",
+    ".claude/skills/loam-verify/SKILL.md": "9438bccc4b042b915f1801607935c7ba8920a46397a4fdeb0ff9e8c4d20617aa",
+    ".claude/skills/loam-ship/SKILL.md": "03aea618db948b0438b714c2156c1c220a2b647a569c2b6b8c8b2e83b128bc50",
+    ".claude/skills/loam-report/SKILL.md": "45b54af9e2b9a3dad3055585907de74d957828591ba9c71bbc8f593effed114c"
+  }
+}

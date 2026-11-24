@@ -1,0 +1,1326 @@
+openapi: 3.1.0
+info:
+  title: plumb
+  version: "1.0.0"
+  description: |
+    The contract of the plumb review core. An integrator sends complete review packages and
+    feedback, and reads results; a maintainer registers rules and decides on rule candidates.
+    plumb fetches nothing a message does not contain, publishes nothing, and follows no link.
+
+servers:
+  - url: http://localhost:7300
+
+security:
+  - projectKey: []
+
+paths:
+  /v1/blobs/{digest}:
+    put:
+      operationId: uploadBlob
+      summary: Upload the content of one file, addressed by its digest
+      description: |
+        A file is stored once, whatever number of snapshots shares it. Uploading a digest that is
+        already stored is a no-op; content that does not hash to the digest is refused.
+      parameters:
+        - $ref: "#/components/parameters/Digest"
+      requestBody:
+        required: true
+        content:
+          application/octet-stream:
+            schema:
+              type: string
+              contentMediaType: application/octet-stream
+      responses:
+        "201":
+          description: Stored
+        "200":
+          description: Already stored
+        "400":
+          $ref: "#/components/responses/ContractViolation"
+
+  /v1/snapshots/{digest}:
+    put:
+      operationId: putSnapshot
+      summary: Register the snapshot manifest of a revision — every path with the digest of its content
+      description: |
+        The digest is that of the manifest itself. When files the manifest names are missing, the
+        snapshot is not registered and the answer lists them: upload each with `uploadBlob`, then
+        send the manifest again.
+      parameters:
+        - $ref: "#/components/parameters/Digest"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SnapshotManifest"
+      responses:
+        "201":
+          description: Registered; every file is present
+        "200":
+          description: Already registered
+        "409":
+          description: Files are missing; nothing was registered
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MissingBlobs"
+        "400":
+          $ref: "#/components/responses/ContractViolation"
+
+  /v1/projects/{projectId}/reviews:
+    post:
+      operationId: submitReview
+      summary: Submit a complete review package for one revision of a change
+      description: |
+        Submitting a revision that was already submitted returns the existing review instead of
+        starting a new one.
+      parameters:
+        - $ref: "#/components/parameters/ProjectId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ReviewRequest"
+      responses:
+        "202":
+          description: Accepted and queued
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JobAccepted"
+        "200":
+          description: This revision was already submitted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JobAccepted"
+        "400":
+          $ref: "#/components/responses/ContractViolation"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /v1/reviews/{reviewId}:
+    get:
+      operationId: getReview
+      summary: Fetch a review result, waiting for it if asked
+      parameters:
+        - name: reviewId
+          in: path
+          required: true
+          schema:
+            type: string
+        - $ref: "#/components/parameters/Wait"
+      responses:
+        "200":
+          description: The review, in whatever state it has reached
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReviewResult"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /v1/projects/{projectId}/changes/{changeId}:
+    get:
+      operationId: getChange
+      summary: Fetch the state of a change across all its revisions
+      parameters:
+        - $ref: "#/components/parameters/ProjectId"
+        - name: changeId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Every finding returned for the change, with its status, outcome and follow-ups
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ChangeState"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /v1/projects/{projectId}/feedback:
+    post:
+      operationId: postFeedback
+      summary: Send feedback events — shown, replies, thread states, closures, missed defects, human comments
+      parameters:
+        - $ref: "#/components/parameters/ProjectId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/FeedbackBatch"
+      responses:
+        "202":
+          description: Accepted
+        "400":
+          $ref: "#/components/responses/ContractViolation"
+
+  /v1/projects/{projectId}/audits:
+    post:
+      operationId: submitAudit
+      summary: Submit a snapshot for an audit
+      parameters:
+        - $ref: "#/components/parameters/ProjectId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AuditRequest"
+      responses:
+        "202":
+          description: Accepted and queued
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JobAccepted"
+        "400":
+          $ref: "#/components/responses/ContractViolation"
+
+  /v1/audits/{auditId}:
+    get:
+      operationId: getAudit
+      summary: Fetch an audit result, waiting for it if asked
+      parameters:
+        - name: auditId
+          in: path
+          required: true
+          schema:
+            type: string
+        - $ref: "#/components/parameters/Wait"
+      responses:
+        "200":
+          description: The audit, in whatever state it has reached
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuditResult"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /v1/packs/{packId}/versions/{version}:
+    put:
+      operationId: putRulePack
+      summary: Publish a version of an organization rule pack
+      description: A published version is immutable; a project refers to it as `packId@version`.
+      security:
+        - organizationKey: []
+      parameters:
+        - name: packId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: version
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RulePack"
+      responses:
+        "201":
+          description: Published
+        "409":
+          description: This version is already published with different content
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /v1/projects/{projectId}/config:
+    put:
+      operationId: putProjectConfig
+      security:
+        - maintainerKey: []
+      summary: Register the project configuration — packs, conventions, scopes, rules and parameters
+      parameters:
+        - $ref: "#/components/parameters/ProjectId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProjectConfig"
+      responses:
+        "200":
+          description: Registered as a new configuration version
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Configuration"
+        "400":
+          $ref: "#/components/responses/ContractViolation"
+
+  /v1/projects/{projectId}/rules:
+    get:
+      operationId: listRules
+      security:
+        - maintainerKey: []
+      summary: List the rules in effect and the rule candidates, with provenance
+      parameters:
+        - $ref: "#/components/parameters/ProjectId"
+        - name: status
+          in: query
+          schema:
+            $ref: "#/components/schemas/RuleStatus"
+      responses:
+        "200":
+          description: Rules
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [rules]
+                properties:
+                  rules:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Rule"
+
+  /v1/projects/{projectId}/rules/{ruleId}/decision:
+    post:
+      operationId: decideRule
+      security:
+        - maintainerKey: []
+      summary: Accept or reject a rule candidate that waits for a maintainer
+      parameters:
+        - $ref: "#/components/parameters/ProjectId"
+        - name: ruleId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [decision]
+              properties:
+                decision:
+                  type: string
+                  enum: [accept, reject]
+                reason:
+                  type: string
+      responses:
+        "200":
+          description: The rule after the decision
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Rule"
+        "409":
+          description: The rule is not waiting for a decision
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /v1/projects/{projectId}/configurations:
+    get:
+      operationId: listConfigurations
+      security:
+        - maintainerKey: []
+      summary: List configuration versions, newest first
+      parameters:
+        - $ref: "#/components/parameters/ProjectId"
+      responses:
+        "200":
+          description: Configuration versions
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [configurations]
+                properties:
+                  configurations:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Configuration"
+
+  /v1/projects/{projectId}/configurations/{version}/activate:
+    post:
+      operationId: activateConfiguration
+      security:
+        - maintainerKey: []
+      summary: Make an earlier configuration version the active one
+      parameters:
+        - $ref: "#/components/parameters/ProjectId"
+        - name: version
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: The configuration now active
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Configuration"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /v1/projects/{projectId}/report:
+    get:
+      operationId: getReport
+      security:
+        - maintainerKey: []
+      summary: The usefulness report — addressed share by category, with counts and the human baseline
+      parameters:
+        - $ref: "#/components/parameters/ProjectId"
+        - name: windowDays
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            default: 90
+      responses:
+        "200":
+          description: Report
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Report"
+
+components:
+  securitySchemes:
+    projectKey:
+      type: http
+      scheme: bearer
+      description: The project's integration key, for the integrator's operations; it scopes every record the call can read or write.
+    maintainerKey:
+      type: http
+      scheme: bearer
+      description: The project's maintainer key, for rules, configurations and the report; separate from the integration key.
+    organizationKey:
+      type: http
+      scheme: bearer
+      description: An organization key, needed only to publish rule packs.
+
+  parameters:
+    Wait:
+      name: wait
+      in: query
+      description: Seconds to hold the request open until the job leaves queued or running; plumb never calls an integrator back.
+      schema:
+        type: integer
+        minimum: 0
+        maximum: 60
+        default: 0
+    ProjectId:
+      name: projectId
+      in: path
+      required: true
+      schema:
+        type: string
+    Digest:
+      name: digest
+      in: path
+      required: true
+      schema:
+        type: string
+        pattern: "^sha256:[0-9a-f]{64}$"
+
+  responses:
+    ContractViolation:
+      description: The message does not satisfy the contract; `code` says which rule it broke
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    Unauthorized:
+      description: The key is missing, unknown or belongs to another project
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    NotFound:
+      description: No such record for this project
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+
+  schemas:
+    ReviewRequest:
+      type: object
+      required: [schema, change]
+      properties:
+        schema:
+          const: plumb.review/v1
+        change:
+          $ref: "#/components/schemas/Change"
+        context:
+          type: array
+          items:
+            $ref: "#/components/schemas/ContextItem"
+        depth:
+          type: string
+          enum: [auto, normal, extended]
+          default: auto
+          description: "`auto` lets triage decide; the other two are the integrator's override, recorded as such."
+
+    Change:
+      type: object
+      required: [id, revision, baseRevision, diff, files]
+      properties:
+        id:
+          type: string
+          description: Stable across revisions, such as a pull request number.
+        revision:
+          type: string
+        baseRevision:
+          type: string
+        diff:
+          type: string
+          description: Unified diff from the base revision to this revision.
+        files:
+          type: array
+          items:
+            $ref: "#/components/schemas/ChangedFile"
+        snapshot:
+          $ref: "#/components/schemas/SnapshotRef"
+        author:
+          $ref: "#/components/schemas/Author"
+
+    ChangedFile:
+      type: object
+      required: [path, status]
+      properties:
+        path:
+          type: string
+        previousPath:
+          type: string
+        status:
+          type: string
+          enum: [added, modified, deleted, renamed]
+        base:
+          type: string
+          description: Content at the base revision.
+        head:
+          type: string
+          description: Content at this revision.
+
+    SnapshotRef:
+      type: object
+      required: [digest]
+      description: Names a registered snapshot manifest.
+      properties:
+        digest:
+          type: string
+          pattern: "^sha256:[0-9a-f]{64}$"
+
+    SnapshotManifest:
+      type: object
+      required: [files]
+      properties:
+        files:
+          type: array
+          items:
+            type: object
+            required: [path, digest]
+            properties:
+              path:
+                type: string
+              digest:
+                type: string
+                pattern: "^sha256:[0-9a-f]{64}$"
+
+    MissingBlobs:
+      type: object
+      required: [missing]
+      properties:
+        missing:
+          type: array
+          items:
+            type: string
+            pattern: "^sha256:[0-9a-f]{64}$"
+
+    ContextItem:
+      type: object
+      required: [body, source]
+      description: |
+        Any text the integrator considers context for the change: a ticket, a page, a section of
+        a specification, a pull request description. Only `body` and `source` are required.
+      properties:
+        body:
+          type: string
+        source:
+          type: object
+          required: [system]
+          properties:
+            system:
+              type: string
+            ref:
+              type: string
+            url:
+              type: string
+            revision:
+              type: string
+        title:
+          type: string
+        kind:
+          type: string
+        trust:
+          type: string
+          enum: [approved, proposed, unknown]
+          default: unknown
+        links:
+          type: array
+          items:
+            type: object
+            required: [rel, ref]
+            properties:
+              rel:
+                type: string
+              ref:
+                type: string
+        facets:
+          type: object
+          description: Optional structured extensions, keyed by name; plumb ignores names it does not know.
+          additionalProperties: true
+
+    Author:
+      type: object
+      required: [id, role]
+      properties:
+        id:
+          type: string
+        role:
+          type: string
+          enum: [maintainer, member, outside, bot]
+          description: Asserted by the integrator; plumb learns only from maintainers and members.
+
+    JobAccepted:
+      type: object
+      required: [id, status]
+      properties:
+        id:
+          type: string
+        status:
+          $ref: "#/components/schemas/JobStatus"
+
+    JobStatus:
+      type: string
+      enum: [queued, running, completed, not_completed]
+
+    ReviewResult:
+      type: object
+      required: [reviewId, changeId, revision, status, findings]
+      properties:
+        reviewId:
+          type: string
+        changeId:
+          type: string
+        revision:
+          type: string
+        status:
+          $ref: "#/components/schemas/JobStatus"
+        reason:
+          type: string
+          description: Present when the status is not_completed.
+        requestDigest:
+          type: string
+          pattern: "^sha256:[0-9a-f]{64}$"
+          description: The archived request this result was computed from.
+        configurationVersion:
+          type: integer
+        rulePackVersions:
+          type: array
+          description: The rule packs the result was computed under, as `packId@version`.
+          items:
+            type: string
+        depth:
+          $ref: "#/components/schemas/DepthDecision"
+        findings:
+          type: array
+          items:
+            $ref: "#/components/schemas/Finding"
+        unplaced:
+          type: array
+          description: Verified findings that could not be placed on a line of the diff.
+          items:
+            $ref: "#/components/schemas/Finding"
+        counts:
+          type: object
+          properties:
+            filesReviewed:
+              type: integer
+            withheldByRules:
+              type: integer
+            overLimit:
+              type: integer
+            droppedUnverified:
+              type: integer
+        expectations:
+          type: array
+          items:
+            $ref: "#/components/schemas/Expectation"
+        missingContext:
+          type: array
+          items:
+            type: string
+        instructionsFound:
+          type: array
+          description: Request text addressed to an automated reviewer, quoted with its source.
+          items:
+            type: object
+            required: [source, excerpt]
+            properties:
+              source:
+                type: string
+              excerpt:
+                type: string
+        limitsReached:
+          type: array
+          items:
+            type: string
+            enum: [tokens, steps, wallClock, spend]
+        cost:
+          $ref: "#/components/schemas/Cost"
+
+    DepthDecision:
+      type: object
+      required: [level, audit, confidence, reasons]
+      properties:
+        level:
+          type: string
+          enum: [normal, extended]
+        audit:
+          type: string
+          enum: [none, suggested, recommended, started]
+        confidence:
+          type: number
+          minimum: 0
+          maximum: 1
+        reasons:
+          type: array
+          items:
+            type: string
+        decidedBy:
+          type: string
+          enum: [triage, trigger, request, exploration]
+
+    Finding:
+      type: object
+      required: [id, category, severity, confidence, location, claim, failureScenario]
+      properties:
+        id:
+          type: string
+          description: Identity stable across revisions of the change.
+        category:
+          type: string
+        severity:
+          type: string
+          enum: [critical, high, medium, low]
+        confidence:
+          type: number
+          minimum: 0
+          maximum: 1
+        location:
+          $ref: "#/components/schemas/Location"
+        claim:
+          type: string
+        failureScenario:
+          type: string
+        consequence:
+          type: string
+        evidence:
+          type: array
+          items:
+            $ref: "#/components/schemas/Location"
+        cites:
+          type: array
+          items:
+            $ref: "#/components/schemas/Citation"
+
+    Location:
+      type: object
+      required: [path, startLine, endLine]
+      properties:
+        path:
+          type: string
+        side:
+          type: string
+          enum: [base, head]
+        startLine:
+          type: integer
+        endLine:
+          type: integer
+        note:
+          type: string
+
+    Citation:
+      type: object
+      required: [kind, ref]
+      properties:
+        kind:
+          type: string
+          enum: [rule, requirement]
+        ref:
+          type: string
+          description: A rule id with its pack version, or the source of a context item.
+        quote:
+          type: string
+
+    Expectation:
+      type: object
+      required: [statement, quote, source, trust]
+      properties:
+        statement:
+          type: string
+        quote:
+          type: string
+        source:
+          type: string
+        trust:
+          type: string
+          enum: [approved, proposed, unknown]
+
+    Cost:
+      type: object
+      properties:
+        tokens:
+          type: integer
+        usd:
+          type: number
+        wallSeconds:
+          type: number
+        steps:
+          type: integer
+
+    ChangeState:
+      type: object
+      required: [changeId, findings]
+      properties:
+        changeId:
+          type: string
+        lastReviewedRevision:
+          type: string
+        closed:
+          type: object
+          properties:
+            state:
+              type: string
+              enum: [merged, closed]
+            finalRevision:
+              type: string
+        findings:
+          type: array
+          items:
+            type: object
+            required: [finding, status]
+            properties:
+              finding:
+                $ref: "#/components/schemas/Finding"
+              status:
+                type: string
+                enum: [returned, shown, addressed, dismissed, unanswered, withdrawn]
+              followUps:
+                type: array
+                items:
+                  $ref: "#/components/schemas/FollowUp"
+
+    FollowUp:
+      type: object
+      required: [kind, message]
+      properties:
+        kind:
+          type: string
+          enum: [withdrawn, upheld]
+        message:
+          type: string
+        evidence:
+          type: array
+          items:
+            $ref: "#/components/schemas/Location"
+
+    FeedbackBatch:
+      type: object
+      required: [events]
+      properties:
+        events:
+          type: array
+          minItems: 1
+          items:
+            $ref: "#/components/schemas/FeedbackEvent"
+
+    FeedbackEvent:
+      type: object
+      required: [type]
+      description: |
+        `shown`, `reply` and `thread` name a finding; `change_closed`, `missed_defect` and
+        `human_comment` name a change.
+      properties:
+        type:
+          type: string
+          enum: [shown, reply, thread, change_closed, missed_defect, human_comment]
+        findingId:
+          type: string
+        changeId:
+          type: string
+        revision:
+          type: string
+        shown:
+          type: boolean
+        text:
+          type: string
+        state:
+          type: string
+          enum: [resolved, reopened, merged, closed]
+        location:
+          $ref: "#/components/schemas/Location"
+        author:
+          $ref: "#/components/schemas/Author"
+
+    AuditRequest:
+      type: object
+      required: [schema, snapshot, scope]
+      properties:
+        schema:
+          const: plumb.audit/v1
+        snapshot:
+          $ref: "#/components/schemas/SnapshotRef"
+        revision:
+          type: string
+        scope:
+          type: string
+          enum: [whole, changedSinceLastAudit, areas]
+        areas:
+          type: array
+          items:
+            type: string
+        context:
+          type: array
+          items:
+            $ref: "#/components/schemas/ContextItem"
+
+    AuditResult:
+      type: object
+      required: [auditId, status, findings]
+      properties:
+        auditId:
+          type: string
+        status:
+          $ref: "#/components/schemas/JobStatus"
+        reason:
+          type: string
+        trigger:
+          type: string
+          enum: [request, escalation]
+        findings:
+          type: array
+          items:
+            $ref: "#/components/schemas/Finding"
+        cost:
+          $ref: "#/components/schemas/Cost"
+
+    RulePack:
+      type: object
+      required: [rules]
+      properties:
+        description:
+          type: string
+        rules:
+          type: array
+          items:
+            $ref: "#/components/schemas/RuleDefinition"
+        conventions:
+          type: array
+          items:
+            $ref: "#/components/schemas/Convention"
+        parameters:
+          $ref: "#/components/schemas/Parameters"
+
+    RuleDefinition:
+      type: object
+      required: [id, category, intent]
+      properties:
+        id:
+          type: string
+        category:
+          type: string
+        severity:
+          type: string
+          enum: [critical, high, medium, low]
+        intent:
+          type: string
+          description: What the rule asks for, in plain language.
+        scope:
+          $ref: "#/components/schemas/Scope"
+        examples:
+          type: object
+          properties:
+            good:
+              type: array
+              items:
+                type: string
+            bad:
+              type: array
+              items:
+                type: string
+        pattern:
+          type: string
+          description: Optional structural pattern for a deterministic check.
+
+    Convention:
+      type: object
+      required: [id, options]
+      properties:
+        id:
+          type: string
+          description: The dimension, such as `domain-modeling`.
+        options:
+          type: array
+          items:
+            type: object
+            required: [id, rules]
+            properties:
+              id:
+                type: string
+              description:
+                type: string
+              rules:
+                type: array
+                items:
+                  $ref: "#/components/schemas/RuleDefinition"
+
+    Scope:
+      type: object
+      properties:
+        paths:
+          type: array
+          items:
+            type: string
+        languages:
+          type: array
+          items:
+            type: string
+
+    ProjectConfig:
+      type: object
+      properties:
+        extends:
+          type: array
+          items:
+            type: string
+            description: "`packId@version`"
+        conventions:
+          type: object
+          additionalProperties:
+            type: string
+        rules:
+          type: array
+          items:
+            $ref: "#/components/schemas/RuleDefinition"
+        scopes:
+          type: array
+          items:
+            type: object
+            required: [paths]
+            properties:
+              paths:
+                type: array
+                items:
+                  type: string
+              conventions:
+                type: object
+                additionalProperties:
+                  type: string
+              disable:
+                type: array
+                items:
+                  type: string
+              parameters:
+                $ref: "#/components/schemas/Parameters"
+        parameters:
+          $ref: "#/components/schemas/Parameters"
+        protectedCategories:
+          type: array
+          description: Categories no learned rule may touch. security and dataLoss stay protected even if a configuration leaves them out.
+          items:
+            type: string
+          default: [security, dataLoss, concurrency]
+
+    Parameters:
+      type: object
+      description: Every value is optional; an unset value takes the layer below or the default.
+      properties:
+        review:
+          type: object
+          properties:
+            maxInlineFindings:
+              type: integer
+              default: 5
+            verifierDifferentFamily:
+              type: boolean
+              default: true
+              description: The verifying model comes from a different provider family than the proposing one, where the project configures more than one.
+            secondVerificationBelow:
+              type: number
+              default: 0.7
+              description: A verdict less confident than this gets one more verification sample; both must confirm.
+            categories:
+              type: array
+              items:
+                type: string
+        limits:
+          type: object
+          properties:
+            maxTokens:
+              type: integer
+            maxSteps:
+              type: integer
+            maxWallSeconds:
+              type: integer
+            maxUsd:
+              type: number
+            retryAttempts:
+              type: integer
+              default: 3
+              description: Attempts for a model request that meets a rate limit or a server error; any other error is not retried.
+        escalation:
+          type: object
+          properties:
+            suggestFrom:
+              type: number
+              default: 0.3
+            extendedAt:
+              type: number
+              default: 0.5
+            auditAt:
+              type: number
+              default: 0.8
+            triageVotes:
+              type: integer
+              default: 3
+            explorationRate:
+              type: number
+              default: 0.05
+            dailyBudgetUsd:
+              type: number
+            coalesceMinutes:
+              type: integer
+              default: 60
+              description: Escalations of one area within this window share one audit.
+            signalWeights:
+              type: object
+              description: >-
+                Weights of the deterministic depth signals before calibration. Defaults: publicSymbols 0.3,
+                crossCutting 0.3, dependencyManifest 0.2, modulesTouched 0.15, size 0.05, declaredArchitecture 0.3.
+              additionalProperties:
+                type: number
+            callerDepth:
+              type: integer
+              default: 2
+              description: How many levels of callers of a changed symbol the affected area takes in, when no architecture facets name the area.
+        learning:
+          type: object
+          properties:
+            minSimilarDismissals:
+              type: integer
+              default: 3
+            minDistinctPeople:
+              type: integer
+              default: 2
+            windowDays:
+              type: integer
+              default: 90
+            similarity:
+              type: number
+              default: 0.85
+            shadowReviews:
+              type: integer
+              default: 10
+            approval:
+              type: string
+              enum: [riskBased, always, never]
+              default: riskBased
+              description: riskBased — a learned rule that only downgrades within a path or layer activates by itself; one that withholds, or covers the whole project, waits for a maintainer.
+            revisitAfterDays:
+              type: integer
+              default: 90
+            replaySample:
+              type: integer
+              default: 300
+              description: Stored requests in a replay sample, stratified by category and size; every reported miss is always added.
+            replayMaxUsd:
+              type: number
+              description: Spend limit of one replay.
+            dismissedWeight:
+              type: number
+              default: 0.5
+            missedWeight:
+              type: number
+              default: 2
+            minImprovement:
+              type: number
+              default: 1
+              description: Utility gain (addressed − dismissedWeight × dismissed − missedWeight × missed) a candidate must show, with its bootstrap lower bound above zero.
+            replayProtectSeverity:
+              type: string
+              enum: [critical, high, medium, low]
+              default: high
+              description: A candidate that would have withheld an addressed finding at or above this severity is rejected or narrowed.
+        models:
+          type: object
+          description: The provider, model and connection profile of each step that uses a model.
+          properties:
+            triage:
+              $ref: "#/components/schemas/ModelChoice"
+            context:
+              $ref: "#/components/schemas/ModelChoice"
+            propose:
+              $ref: "#/components/schemas/ModelChoice"
+            verify:
+              $ref: "#/components/schemas/ModelChoice"
+            classify:
+              $ref: "#/components/schemas/ModelChoice"
+            critic:
+              $ref: "#/components/schemas/ModelChoice"
+            embed:
+              $ref: "#/components/schemas/ModelChoice"
+
+    ModelChoice:
+      type: object
+      required: [provider, model, profile]
+      description: >-
+        Names a provider family, a model and a connection profile. A profile is defined only in the
+        model gateway's deployment configuration, as an endpoint and a reference to a secret the gateway
+        resolves itself; the contract never carries an endpoint credential.
+      properties:
+        provider:
+          type: string
+        model:
+          type: string
+        profile:
+          type: string
+
+    RuleStatus:
+      type: string
+      enum: [candidate, awaitingDecision, shadow, active, rejected, retired]
+
+    Rule:
+      type: object
+      required: [id, origin, status, description]
+      properties:
+        id:
+          type: string
+        origin:
+          type: string
+          enum: [builtin, pack, project, learned]
+        status:
+          $ref: "#/components/schemas/RuleStatus"
+        effect:
+          type: string
+          enum: [check, withhold, downgrade]
+        scope:
+          $ref: "#/components/schemas/Scope"
+        description:
+          type: string
+        provenance:
+          type: object
+          properties:
+            findings:
+              type: array
+              items:
+                type: string
+            people:
+              type: integer
+            replay:
+              type: string
+        revisitAt:
+          type: string
+          format: date-time
+
+    Configuration:
+      type: object
+      required: [version, active, origin]
+      properties:
+        version:
+          type: integer
+        active:
+          type: boolean
+        origin:
+          type: string
+          enum: [maintainer, promoter]
+        basedOnReplay:
+          type: string
+        pinned:
+          type: array
+          description: Parameters a person set explicitly, which the promoter never changes.
+          items:
+            type: string
+        createdAt:
+          type: string
+          format: date-time
+
+    Report:
+      type: object
+      required: [windowDays, categories]
+      properties:
+        windowDays:
+          type: integer
+        categories:
+          type: array
+          items:
+            type: object
+            required: [category, returned, addressed]
+            properties:
+              category:
+                type: string
+              returned:
+                type: integer
+              addressed:
+                type: integer
+              dismissed:
+                type: integer
+              unanswered:
+                type: integer
+              addressedShare:
+                type: number
+        humanBaseline:
+          type: object
+          properties:
+            comments:
+              type: integer
+            addressed:
+              type: integer
+            addressedShare:
+              type: number
+        withheldByRules:
+          type: integer
+        escalation:
+          type: object
+          properties:
+            decisions:
+              type: integer
+            extendedUseful:
+              type: integer
+        cost:
+          $ref: "#/components/schemas/Cost"
+
+    Error:
+      type: object
+      required: [code, message]
+      properties:
+        code:
+          type: string
+        message:
+          type: string
+        details:
+          type: object
+          additionalProperties: true
